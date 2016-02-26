@@ -15,6 +15,10 @@ if [ "$OPLOG_SIZE" != "" ]; then
     cmd="$cmd --oplogSize $OPLOG_SIZE"
 fi
 
+if [[ "$SSLON" != "" ]]; then
+  cmd="$cmd --sslAllowConnectionsWithoutCertificates --sslMode requireSSL --sslPEMKeyFile /ssl/mongodb.cert --sslCAFile /ssl/CertAuth.pem"
+fi
+
 $cmd &
 
 if [ ! -f /data/db/.mongodb_password_set ]; then
