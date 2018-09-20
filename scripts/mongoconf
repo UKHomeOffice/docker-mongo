@@ -1,0 +1,534 @@
+#!/usr/bin/env python
+
+########## MODULES ##########
+
+import copy
+import logging
+import os
+import re
+import ssl
+import sys
+import time
+
+import bson
+import pymongo
+
+########## VARIABLES ##########
+
+# Log level
+log_level_string = os.environ['MONGODB_MONGOCONF_LOG_LEVEL'].upper()
+
+log_level_numeric = getattr(logging, log_level_string, None)
+
+if not isinstance(log_level_numeric, int):
+    raise ValueError('Invalid log level: {}'.format(log_level_string))
+
+# Log formatter
+formatter = logging.Formatter('%(asctime)s %(levelname)-8s %(name)s %(message)s')
+
+# Log handler (console)
+ch = logging.StreamHandler()
+ch.setLevel(log_level_numeric)
+ch.setFormatter(formatter)
+
+# Logger
+logger = logging.getLogger('[{}:{}]'.format(os.path.basename(sys.argv[0]), __name__))
+logger.setLevel(log_level_numeric)
+logger.addHandler(ch)
+
+# Sensitive properties to exclude from log messages
+sensitive_properties = ['password',]
+
+# Are we initialising the database?
+try:
+    assert sys.argv[1] == 'initialise_db'
+    initialise_db = True
+except (AssertionError, IndexError):
+    initialise_db = False
+
+# Are we initialising / joining a replicaSet?
+try:
+    assert sys.argv[1] == 'initialise_rs'
+    initialise_rs = True
+except (AssertionError, IndexError):
+    initialise_rs = False
+
+# Maximum number of attempts to open a connection before exiting
+max_connection_retries = int(os.environ['MONGODB_MAX_CONNECTION_RETRIES'])
+
+# MongoDB users are defined using sets of related environment variables
+# Each variable name in a set includes an "index" corresponding to the user
+# Use a regular expression to extract these "indexes"
+user_index_pattern = re.compile(r'MONGODB_USER_(\d+)_.*')
+
+# Current host
+current_host = os.environ['MONGODB_SSL_CERT_SUBJECT']
+
+# Grant votes to replicaSet members once they reach one of the following states
+rs_voting_states = [
+    'PRIMARY',
+    'SECONDARY',
+    'ARBITER',
+]
+
+########## FUNCTIONS ##########
+
+def parse_roles(all_roles_string):
+
+    '''
+    Convert a role string of the form 'db:role[:role][|db:role[:role]]' to a dictionary
+    '''
+
+    all_roles = {}
+
+    for single_db_roles in all_roles_string.split('|'):
+
+        db = single_db_roles.split(':')[0]
+        roles = single_db_roles.split(':')[1:]
+
+        all_roles[db] = roles
+
+    return all_roles
+
+def build_user(user_index):
+
+    '''
+    Build a representation of a MongoDB user from appropriate environment variables
+    '''
+
+    user = {
+        'username': os.environ['MONGODB_USER_{}_USERNAME'.format(user_index)],
+        'auth_db': os.environ['MONGODB_USER_{}_AUTH_DB'.format(user_index)],
+        'auth_type': os.environ['MONGODB_USER_{}_AUTH_TYPE'.format(user_index)],
+        'password': os.environ['MONGODB_USER_{}_PASSWORD'.format(user_index)],
+        'roles': parse_roles(
+            os.environ['MONGODB_USER_{}_ROLES'.format(user_index)]
+        )
+    }
+
+    return user
+
+def create_or_update_user(connection, user):
+
+    '''
+    Create or update a MongoDB user
+    '''
+
+    user_roles = []
+
+    for db, roles in user['roles'].items():
+        for role in roles:
+            user_roles.append({'db': db, 'role': role})
+
+    if user['auth_type'].lower() == 'x509':
+
+        db = connection['$external']
+
+        create_command = bson.son.SON()
+        create_command['createUser'] = user['username']
+        create_command['roles'] = user_roles
+
+        try:
+
+            db.command(create_command)
+
+        except pymongo.errors.DuplicateKeyError:
+
+            update_command = bson.son.SON()
+            update_command['updateUser'] = user['username']
+            update_command['roles'] = user_roles
+
+            db.command(update_command)
+
+    else:
+
+        db = connection[user['auth_db']]
+
+        create_command = bson.son.SON()
+        create_command['createUser'] = user['username']
+        create_command['pwd'] = user['password']
+        create_command['roles'] = user_roles
+
+        try:
+
+            db.command(create_command)
+
+        except pymongo.errors.duplicateKeyError:
+
+            update_command = bson.son.SON()
+            update_command['updateUser'] = user['username']
+            update_command['pwd'] = user['password']
+            update_command['roles'] = user_roles
+
+            db.command(update_command)
+
+def get_client_options(host=None, use_auth=False, use_ssl=False, use_rs=False):
+
+    '''
+    Return a tailored dictionary of options suitable for initialising an
+    instance of MongoClient
+    '''
+
+    options = {}
+
+    # Core options
+    options.update({
+        'host': host,
+        'port': 27017,
+    })
+
+    # Authentication options
+    if use_auth:
+
+        if os.environ['MONGODB_ADMIN_USER_AUTH_TYPE'].lower() == 'x509':
+
+            # X509 authentication
+            options.update({
+                'authMechanism': 'MONGODB-X509',
+            })
+
+        else:
+
+            # Password authentication
+            options.update({
+                'authSource': os.environ['MONGODB_ADMIN_USER_AUTH_DB'],
+                'username': os.environ['MONGODB_ADMIN_USER_USERNAME'],
+                'password': os.environ['MONGODB_ADMIN_USER_PASSWORD'],
+            })
+
+    # SSL options
+    if use_ssl:
+
+        options.update({
+            'ssl': True,
+            'ssl_certfile': os.environ['MONGODB_SSL_CERT'],
+            'ssl_keyfile': os.environ['MONGODB_SSL_KEY'],
+            'ssl_ca_certs': os.environ['MONGODB_SSL_CA'],
+            'ssl_cert_reqs': ssl.CERT_REQUIRED,
+            'ssl_match_hostname': True,
+        })
+
+    # Replica set options
+    if use_rs:
+
+        options.update({
+            'replicaSet': os.environ['MONGODB_REPLICA_SET_NAME'],
+        })
+
+    return options
+
+def rs_config_add_self(rsconfig, voting_member=True):
+
+    '''
+    Add the current host to a dictionary representing
+    the configuration of a MongoDB replicaSet
+    '''
+
+    member_ids = [member['_id'] for member in rsconfig['members']]
+
+    if member_ids:
+        new_member_id = max(member_ids) + 1
+    else:
+        new_member_id = 0
+
+    new_member = {
+        '_id': new_member_id,
+        'host': os.environ['MONGODB_SSL_CERT_SUBJECT']
+    }
+
+    if voting_member:
+        new_member['votes'] = 1
+        new_member['priority'] = 1
+    else:
+        new_member['votes'] = 0
+        new_member['priority'] = 0
+
+    rsconfig['members'].append(new_member)
+
+    rsconfig['version'] += 1
+
+    return rsconfig
+
+def rs_config_become_voting_member(rsconfig, target_host, votes=1, priority=1.0):
+
+    '''
+    Update a host's "votes" and "priority" settings in a replicaSet configuration dictionary
+    '''
+
+    for member in rsconfig['members']:
+
+        # N.B. The value of member['host'] is "host:port"
+        if target_host in member['host']:
+
+            member['votes'] = votes
+            member['priority'] = priority
+
+            rsconfig['version'] += 1
+
+    return rsconfig
+
+def rs_status_get_member_state(status, target_host):
+
+    '''
+    Extract the replica state for a particular host from a
+    replicaSet status dictionary
+    '''
+
+    for member in status['members']:
+
+        # N.B. The value of member['name'] is "host:port"
+        if target_host in member['name']:
+            return member['stateStr']
+
+def redact(source_dict, target_keys):
+
+    '''
+    Return a redacted version of a dictionary
+    '''
+
+    working_dict = copy.deepcopy(source_dict)
+
+    for target_key in target_keys:
+        if target_key in working_dict:
+            working_dict[target_key] = 'REDACTED'
+
+    return working_dict
+
+########## PREAMBLE ##########
+
+# Initial user
+
+admin_user = {
+    'username': os.environ['MONGODB_ADMIN_USER_USERNAME'],
+    'auth_db': os.environ['MONGODB_ADMIN_USER_AUTH_DB'],
+    'auth_type': os.environ['MONGODB_ADMIN_USER_AUTH_TYPE'],
+    'password': os.environ['MONGODB_ADMIN_USER_PASSWORD'],
+    'roles': parse_roles(os.environ['MONGODB_ADMIN_USER_ROLES'])
+}
+
+########## MAIN ##########
+
+# First run
+if initialise_db:
+
+    logger.info('Performing first-run initialisation')
+
+    # Get client options (no authentication, no SSL, no replicaSet)
+    client_options = get_client_options(host='127.0.0.1')
+    logger.debug('client_options: %s', redact(client_options, sensitive_properties))
+
+    # Initialise MongoDB client
+    client = pymongo.MongoClient(**client_options)
+
+    # Create initial admin user
+    logger.info('Creating initial administrative account')
+    logger.debug('Account details: %s', redact(admin_user, sensitive_properties))
+    create_or_update_user(client, admin_user)
+    logger.info('Created initial administrative account')
+
+    raise SystemExit(0)
+
+# Initialise / join replica set
+if initialise_rs:
+
+    logger.info('Managing replicaSet membership')
+
+    # Get client options (authentication, SSL, no replicaSet)
+    client_self_options = get_client_options(
+        host=os.environ['MONGODB_SSL_CERT_SUBJECT'],
+        use_auth=True,
+        use_ssl=True,
+    )
+
+    logger.debug('client_self_options: %s', redact(client_self_options, sensitive_properties))
+
+    # Get client options (authentication, SSL, replicaSet)
+    client_rs_options = get_client_options(
+        host=os.environ['MONGODB_REPLICA_SET_SEED'],
+        use_auth=True,
+        use_ssl=True,
+        use_rs=True
+    )
+
+    logger.debug('client_rs_options: %s', redact(client_rs_options, sensitive_properties))
+
+    # Initialise MongoDB client (connects to self)
+    client_self = pymongo.MongoClient(**client_self_options)
+
+    # Initialise MongoDB client (connects to existing rs)
+    client_rs = pymongo.MongoClient(**client_rs_options)
+
+    # Retrieve local replicaSet summary
+    is_master = client_self.admin.command('isMaster')
+    logger.debug('Local isMaster query result: %s', is_master)
+
+    try:
+
+        # If we're already part of a replicaSet, don't initialise / join
+        # The 'setName' key is only present for members of a replicaSet
+        assert is_master['setName'] != None
+
+        logger.info('Skipping replicaSet configuration (isMaster contains setName)')
+
+    except KeyError:
+
+        # We're not currently part of a replicaSet
+
+        try:
+
+            # Can we query an existing replicaSet?
+            rs_summary = client_rs.admin.command('isMaster')
+            logger.debug('replicaSet isMaster query result: %s', rs_summary)
+
+            logger.info('Joining existing replicaSet')
+
+            # Use the result of the previous query to open a
+            # connection to the replicaSet primary
+            client_primary_options = get_client_options(
+                host=rs_summary['primary'],
+                use_auth=True,
+                use_ssl=True,
+                use_rs=True,
+            )
+
+            logger.debug('client_primary_options: %s', redact(client_primary_options,
+                                                              sensitive_properties))
+
+            client_primary = pymongo.MongoClient(**client_primary_options)
+
+            # Request the full replicaSet configuration
+            rs_config = client_rs.admin.command('replSetGetConfig')['config']
+            logger.debug('Current replicaSet configuration: %s', rs_config)
+
+            # Add ourself to the replicaSet configuration
+            updated_rs_config = rs_config_add_self(rs_config, voting_member=False)
+            logger.debug('Proposed replicaSet configuration: %s', updated_rs_config)
+
+            # Update replicaSet
+            client_primary.admin.command('replSetReconfig', updated_rs_config)
+            logger.info('Joined existing replicaSet as a non-voting member')
+
+            # When joining a replicaSet, a majority of voting members need to
+            # be available; if we join as a voting member, that includes us.
+
+            # If this node is set to be unreachable until initialisation is
+            # complete, this can block the update to the set.
+
+            # This seems to leave two unappealing options; mark ourselves as
+            # ready before initialisation is actually complete, or jump
+            # through hoops to join as a non-voting member and promote
+            # ourselves later.
+
+            # As a least-bad compromise:
+            # - Join as a non-voting member,
+            # - Define readiness as "is a member of a replicaSet"
+            # - Attempt to promote in a loop, retrying if the operation fails
+            #   (we need to wait until this node is actually marked as "ready")
+
+            # This should at least ensure that key initialisation tasks are
+            # completed before we're marked as "ready" (minimising the risk
+            # of creating competing replicaSets etc.).
+
+            # Request the current (updated) replicaSet configuration
+            rs_config = client_rs.admin.command('replSetGetConfig')['config']
+
+            # Update replicaSet configuration object; promote current host to
+            # a voting member
+            logger.info('Preparing to promote [ %s ] to a replicaSet voting member', current_host)
+            logger.info('Acceptable replica states for promotion: %s', rs_voting_states)
+            updated_rs_config = rs_config_become_voting_member(rs_config, current_host)
+
+            # Defer promotion until node enters an acceptable state
+            while True:
+
+                rs_status = client_rs.admin.command('replSetGetStatus')
+                logger.debug('replicaSet members: %s', rs_status['members'])
+
+                member_state = rs_status_get_member_state(rs_status, current_host)
+                logger.info('Current replica state: %s', member_state)
+
+                if member_state in rs_voting_states:
+                    logger.info('Node has entered an acceptable replica state')
+                    break
+                else:
+                    logger.info('Waiting for node to enter an acceptable replica state')
+                    time.sleep(5)
+
+            # Apply promotion
+            while True:
+
+                logger.info('Attempting to apply promotion')
+
+                try:
+                    client_primary.admin.command('replSetReconfig', updated_rs_config)
+                    logger.info('Successfully applied promotion')
+                    break
+                except pymongo.errors.OperationFailure as err:
+                    time.sleep(5)
+                    logger.warn('An error occurred during promotion: %s', err)
+
+        except pymongo.errors.ServerSelectionTimeoutError:
+
+            # We were unable to query an existing replicaSet
+            # Assume we need to initialise a new set
+
+            logger.info('Initialising new replicaSet')
+
+            # Create an initial replicaSet configuration
+            rs_config = {
+                '_id': os.environ['MONGODB_REPLICA_SET_NAME'],
+                'members': [],
+                'version': 0,
+            }
+
+            # Use this node as our initial replicaSet primary
+            client_primary = client_self
+
+            # Add ourself to the replicaSet configuration
+            updated_rs_config = rs_config_add_self(rs_config)
+            logger.debug('Proposed replicaSet configuration: %s', updated_rs_config)
+
+            # Initiate replicaSet
+            client_primary.admin.command('replSetInitiate', updated_rs_config)
+
+            logger.info('Initialised new replicaSet')
+
+    raise SystemExit(0)
+
+# Standard run
+
+logger.info('Executing start-up tasks')
+
+# Get client options (authentication, SSL, replicaSet)
+client_options = get_client_options(
+    host=os.environ['MONGODB_SSL_CERT_SUBJECT'],
+    use_auth=True,
+    use_ssl=True,
+    use_rs=True,
+)
+
+logger.debug('client_options: %s', client_options)
+
+# Initialise MongoDB client
+client = pymongo.MongoClient(**client_options)
+
+logger.info('Updating users')
+
+# Build a list of users to be updated
+user_indexes = set()
+
+for environment_variable in os.environ:
+    mo = user_index_pattern.match(environment_variable)
+    if mo:
+        user_indexes.add(mo.group(1))
+
+mongodb_users = [build_user(index) for index in user_indexes]
+mongodb_users.append(admin_user)
+
+# Update users
+for mongodb_user in mongodb_users:
+    logger.debug('Create / update user: %s', redact(mongodb_user, sensitive_properties))
+
+    create_or_update_user(client, mongodb_user)
+
+logger.info('Updated users')
