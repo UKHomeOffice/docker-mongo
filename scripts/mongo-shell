@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+# CA certificate bundle
+ca_bundle="${MONGODB_SSL_CA:-/etc/ssl/certs/ca-certificates.crt}"
+
+# Concatenated server key / certificate file
+server_bundle="${MONGODB_SSL_SERVER_BUNDLE:-${MONGODB_HOME}/tls/mongodb.pem}"
+
+# Server certificate subject
+server_cert_cn=$(openssl x509 \
+-in "${server_bundle}" \
+-noout \
+-subject \
+-nameopt multiline \
+| sed -n 's# *commonName *= ##p'\
+)
+
+# Concatenated admin key / certificate file
+admin_bundle="${MONGODB_SSL_ADMIN_BUNDLE:-${MONGODB_HOME}/tls/mongo-admin-combined.pem}"
+
+# Admin certificate subject
+admin_cert_subject=$(openssl x509 \
+-in "${admin_bundle}" \
+-noout \
+-subject \
+-nameopt RFC2253 \
+| sed -n 's# *subject= *##p'\
+)
+
+# MongoDB authentication command
+auth_cmd=$(cat << LOGIN_CMD
+db.getSiblingDB("\$external").auth({user: "${admin_cert_subject}", mechanism: "MONGODB-X509"})
+LOGIN_CMD
+)
+
+# Connection string options
+declare -a connection_options
+
+for arg in "$@"; do
+    connection_options+=( "${arg}" )
+done
+
+options_string="?"
+
+for option in "${connection_options[@]}"; do
+    options_string="${options_string}${option}&"
+done
+
+options_string=${options_string%&}
+options_string=${options_string%\?}
+
+cat << DEBUG
+
+ca_bundle: ${ca_bundle}
+server_bundle: ${server_bundle}
+server_cert_cn: ${server_cert_cn}
+admin_bundle: ${admin_bundle}
+admin_cert_subject: ${admin_cert_subject}
+auth_cmd: ${auth_cmd}
+options_string: ${options_string}
+
+DEBUG
+
+mongo --shell --ssl --sslCAFile "${ca_bundle}" --sslPEMKeyFile "${admin_bundle}" --eval "${auth_cmd}" mongodb://"${server_cert_cn}":27017/DB"${options_string}"

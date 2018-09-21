@@ -1,0 +1,27 @@
+pipeline:
+
+  build_image:
+    environment:
+      - DOCKER_USERNAME=ukhomeofficedigital+mongo
+    image: quay.io/ukhomeofficedigital/drone-docker
+    registry: quay.io
+    repo: quay.io/ukhomeofficedigital/mongo
+    secrets: [ DOCKER_PASSWORD ]
+    tags:
+      - ${DRONE_COMMIT_SHA}
+      - latest
+    when:
+      event: push
+      branch: master
+
+  build_image_tag:
+    environment:
+      - DOCKER_USERNAME=ukhomeofficedigital+mongo
+    image: quay.io/ukhomeofficedigital/drone-docker
+    registry: quay.io
+    repo: quay.io/ukhomeofficedigital/mongo
+    secrets: [ DOCKER_PASSWORD ]
+    tags:
+      - ${DRONE_TAG}
+    when:
+      event: tag

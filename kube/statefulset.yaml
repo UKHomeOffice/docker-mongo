@@ -1,0 +1,128 @@
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: mongo
+  labels:
+    name: mongo
+spec:
+  updateStrategy:
+    type: RollingUpdate
+  serviceName: mongo
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        name: mongo
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        fsGroup: 2500
+      initContainers:
+        - name: certs
+          image: quay.io/ukhomeofficedigital/cfssl-sidekick:v0.1.0
+          securityContext:
+            runAsNonRoot: true
+          args:
+            - --certs=/mnt/certs
+            - --domain=${HOSTNAME}.mongo.{{.KUBE_NAMESPACE}}.svc.cluster.local
+            - --domain=mongo.{{.KUBE_NAMESPACE}}.svc.cluster.local
+            - --domain=localhost
+            - --domain=mongo
+            - --onetime=true
+            - --command=chmod -v 640 /mnt/certs/tls.pem /mnt/certs/tls-key.pem
+          volumeMounts:
+            - name: certs
+              mountPath: /mnt/certs
+            - name: bundle
+              mountPath: /etc/ssl/certs
+              readOnly: true
+        - name: admin-certs
+          image: quay.io/ukhomeofficedigital/cfssl-sidekick:v0.1.0
+          securityContext:
+            runAsNonRoot: true
+          args:
+            - --certs=/mnt/certs
+            - --tls-cert-name=mongo-admin.pem
+            - --tls-key-name=mongo-admin-key.pem
+            - --domain=mongo-admin
+            - --organization=mongo-users
+            - --onetime=true
+            - --command=chmod -v 640 /mnt/certs/mongo-admin.pem /mnt/certs/mongo-admin-key.pem
+          volumeMounts:
+            - name: certs
+              mountPath: /mnt/certs
+            - name: bundle
+              mountPath: /etc/ssl/certs
+              readOnly: true
+      containers:
+      - name: mongo
+        image: quay.io/ukhomeofficedigital/mongo:v0.0.1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 27017
+          name: database
+        resources:
+          limits:
+            memory: 2Gi
+            cpu: 1500m
+        securityContext:
+          runAsNonRoot: true
+        env:
+        - name: MONGODB_ADMIN_USER_USERNAME
+          value: "CN=mongo-admin,O=mongo-users,L=London,ST=London,C=GB"
+        - name: MONGODB_MONGOCONF_LOG_LEVEL
+          value: "DEBUG"
+        - name: MONGODB_REPLICA_SET_SEED
+          value: "mongo.{{.KUBE_NAMESPACE}}.svc.cluster.local"
+        - name: MONGODB_USER_1_USERNAME
+          value: "CN=repo,O=mongo-users,L=London,ST=London,C=GB"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        # The readiness probe below doesn't have access to environment variables set by the entrypoint.
+        # As a result, we need to explicitly define the following variables, rather than allowing the
+        # entrypoint to set them to their default values.
+        - name: MONGODB_SSL_ADMIN_BUNDLE
+          value: "/var/lib/mongo/tls/mongo-admin-combined.pem"
+        - name: MONGODB_SSL_CA
+          value: "/etc/ssl/certs/ca-certificates.crt"
+        readinessProbe:
+          exec:
+           command:
+             - /bin/bash
+             - -c
+             - '/usr/bin/mongo --host=${POD_NAME}.${MONGODB_REPLICA_SET_SEED} --ssl --sslCAFile=${MONGODB_SSL_CA} --sslPEMKeyFile=${MONGODB_SSL_ADMIN_BUNDLE} --quiet --eval "quit(db.runCommand({ ping: 1 }).ok ? 0 : 2)"'
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+        volumeMounts:
+        - name: data
+          mountPath: /data/db
+        - name: certs
+          mountPath: /mnt/certs
+          readOnly: true
+        - name: bundle
+          mountPath: /etc/ssl/certs
+          readOnly: true
+      volumes:
+        - name: bundle
+          configMap:
+            name: bundle
+        - name: certs
+          emptyDir: {}
+        - name: data
+          {{- if eq .MONGODB_STORAGE "" }}
+          emptyDir: {}
+          {{- end }}
+  {{- if .MONGODB_STORAGE }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        annotations:
+          volume.beta.kubernetes.io/storage-class: gp2-encrypted
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: {{.MONGODB_STORAGE}}
+  {{- end }}
