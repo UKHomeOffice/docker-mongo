@@ -9,10 +9,8 @@ pipeline:
     secrets: [ DOCKER_PASSWORD ]
     tags:
       - ${DRONE_COMMIT_SHA}
-      - latest
     when:
       event: push
-      branch: master
 
   build_image_tag:
     environment:
@@ -23,5 +21,6 @@ pipeline:
     secrets: [ DOCKER_PASSWORD ]
     tags:
       - ${DRONE_TAG}
+      - latest
     when:
       event: tag
