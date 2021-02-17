@@ -14,6 +14,21 @@ pipeline:
       event: push
       branch: master
 
+  build_image_nonlatest:
+    environment:
+      - DOCKER_USERNAME=ukhomeofficedigital+mongo
+    image: quay.io/ukhomeofficedigital/drone-docker
+    registry: quay.io
+    repo: quay.io/ukhomeofficedigital/mongo
+    secrets: [ DOCKER_PASSWORD ]
+    tags:
+      - ${DRONE_COMMIT_SHA}
+    when:
+      event: push
+      branch:
+        exclude:
+          - master
+
   build_image_tag:
     environment:
       - DOCKER_USERNAME=ukhomeofficedigital+mongo
