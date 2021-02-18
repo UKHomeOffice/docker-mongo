@@ -8,7 +8,7 @@ set -e
 ##### PKI #####
 
 # CA bundle
-export MONGODB_SSL_CA="${MONGODB_SSL_CA:-/etc/ssl/certs/ca-certificates.crt}"
+export MONGODB_SSL_CA="${MONGODB_SSL_CA:-/etc/ssl/certs/ca-bundle.crt}"
 
 # Server key / certificate
 export MONGODB_SSL_CERT="${MONGODB_SSL_CERT:-/mnt/certs/tls.pem}"
