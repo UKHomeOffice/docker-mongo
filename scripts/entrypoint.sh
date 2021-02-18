@@ -98,7 +98,7 @@ base_startup_command="mongod -f /etc/mongod.conf --auth --wiredTigerCacheSizeGB 
 initial_startup="${base_startup_command} --bind_ip 127.0.0.1"
 
 # Standard startup with SSL and replicaSet options set
-main_startup="${base_startup_command} --replSet ${MONGODB_REPLICA_SET_NAME} --bind_ip_all --sslMode requireSSL --clusterAuthMode x509 --sslPEMKeyFile ${MONGODB_SSL_SERVER_BUNDLE} --sslCAFile ${MONGODB_SSL_CA} --setParameter opensslCipherConfig='HIGH:!EXPORT:!aNULL@STRENGTH'"
+main_startup="${base_startup_command} --replSet ${MONGODB_REPLICA_SET_NAME} --bind_ip_all --setParameter opensslCipherConfig=HIGH:!EXPORT:!aNULL@STRENGTH --sslMode requireSSL --clusterAuthMode x509 --sslPEMKeyFile ${MONGODB_SSL_SERVER_BUNDLE} --sslCAFile ${MONGODB_SSL_CA} --setParameter opensslCipherConfig='HIGH:!EXPORT:!aNULL@STRENGTH'"
 
 # Marker file indicating whether first-run initialisation has been completed
 db_initialisation_marker_file='/data/db/.db_initialised'
