@@ -1,4 +1,4 @@
-FROM quay.io/ukhomeofficedigital/centos-base:26b3cc460ee5ba775702eeaa11bf24464adc822c
+FROM quay.io/ukhomeofficedigital/centos-base:a53308163ef47fb091c1aef1baf7f9dccd61cbe4
 
 USER root
 
@@ -23,7 +23,7 @@ RUN yum clean all && \
 
 VOLUME ["/data/db","/data/configdb"]
 
-RUN pip install pymongo[tls]==3.6.1
+RUN pip2 install pymongo[tls]==3.11.3
 
 USER ${UID}
 
