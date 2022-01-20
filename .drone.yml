@@ -1,14 +1,14 @@
 ---
 kind: pipeline
 type: kubernetes
-name: evw-caseworker
+name: docker-mongo
 
 platform:
   os: linux
   arch: amd64
 
 steps:
-- name: build_image:
+- name: build_image
   environment:
     - DOCKER_USERNAME=ukhomeofficedigital+mongo
   image: quay.io/ukhomeofficedigital/drone-docker
@@ -22,7 +22,7 @@ steps:
     event: push
     branch: master
 
-- name: build_image_nonlatest:
+- name: build_image_nonlatest
   environment:
     - DOCKER_USERNAME=ukhomeofficedigital+mongo
   image: quay.io/ukhomeofficedigital/drone-docker
@@ -37,7 +37,7 @@ steps:
       exclude:
         - master
 
-- name: build_image_tag:
+- name: build_image_tag
   environment:
     - DOCKER_USERNAME=ukhomeofficedigital+mongo
   image: quay.io/ukhomeofficedigital/drone-docker
@@ -48,3 +48,5 @@ steps:
     - ${DRONE_TAG}
   when:
     event: tag
+
+...
