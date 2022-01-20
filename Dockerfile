@@ -23,8 +23,6 @@ RUN yum clean all && \
 
 VOLUME ["/data/db","/data/configdb"]
 
-RUN chown -v -R ${UID}:${UID} /data/
-
 RUN pip2 install pymongo[tls]==3.11.3
 
 USER ${UID}

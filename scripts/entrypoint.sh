@@ -97,14 +97,6 @@ base_startup_command="mongod -f /etc/mongod.conf --auth --wiredTigerCacheSizeGB 
 # Start server without SSL for first-run initialisation
 initial_startup="${base_startup_command} --bind_ip 127.0.0.1"
 
-# Ensure owner of data directory is correct
-echo "script is executing as $UID"
-dataowner=`stat --format '%U' /data/db`
-if [ "$dataowner" == "root" ];
-then
-  chown -R ${UID}:${UID} /data/db
-fi
-
 # Standard startup with SSL and replicaSet options set
 main_startup="${base_startup_command} --replSet ${MONGODB_REPLICA_SET_NAME} --bind_ip_all --setParameter opensslCipherConfig=HIGH:!EXPORT:!aNULL@STRENGTH --tlsMode requireTLS --clusterAuthMode x509 --tlsCertificateKeyFile ${MONGODB_SSL_SERVER_BUNDLE} --tlsCAFile ${MONGODB_SSL_CA}"
 
