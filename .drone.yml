@@ -8,45 +8,66 @@ platform:
   arch: amd64
 
 steps:
-- name: build_image
-  environment:
-    - DOCKER_USERNAME=ukhomeofficedigital+mongo
-  image: quay.io/ukhomeofficedigital/drone-docker
-  registry: quay.io
-  repo: quay.io/ukhomeofficedigital/mongo
-  secrets: [ DOCKER_PASSWORD ]
-  tags:
-    - ${DRONE_COMMIT_SHA}
-    - latest
-  when:
-    event: push
-    branch: master
+  - name: ecr-login
+    pull: if-not-exists
+    image: quay.io/ukhomeofficedigital/dind-awscli:19.03.12-dind-1.18.55
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: aws_access_key_id
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: aws_secret_access_key
+    commands:
+      # wait for docker service to be up before running docker build
+      - n=0; while [ "$n" -lt 60 ] && [ ! docker stats --no-stream ]; do n=$(( n + 1 )); sleep 1; done
+      - aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin 340268328991.dkr.ecr.eu-west-2.amazonaws.com
+    volumes:
+      - name: dockerclientconfig
+        path: /root/.docker
+    when:
+      event:
+        - push
 
-- name: build_image_nonlatest
-  environment:
-    - DOCKER_USERNAME=ukhomeofficedigital+mongo
-  image: quay.io/ukhomeofficedigital/drone-docker
-  registry: quay.io
-  repo: quay.io/ukhomeofficedigital/mongo
-  secrets: [ DOCKER_PASSWORD ]
-  tags:
-    - ${DRONE_COMMIT_SHA}
-  when:
-    event: push
-    branch:
-      exclude:
-        - master
+  - name: build_image
+    pull: if-not-exists
+    image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+    environment:
+      AWS_REGION: eu-west-2
+    commands:
+      - docker build -t 340268328991.dkr.ecr.eu-west-2.amazonaws.com/evw/docker-mongo:$${DRONE_COMMIT_SHA} . --no-cache
+    volumes:
+      - name: dockerclientconfig
+        path: /root/.docker
+    depends_on:
+      - test_and_build
+    when:
+      event:
+        - push
+        - tag
 
-- name: build_image_tag
-  environment:
-    - DOCKER_USERNAME=ukhomeofficedigital+mongo
-  image: quay.io/ukhomeofficedigital/drone-docker
-  registry: quay.io
-  repo: quay.io/ukhomeofficedigital/mongo
-  secrets: [ DOCKER_PASSWORD ]
-  tags:
-    - ${DRONE_TAG}
-  when:
-    event: tag
+  - name: push_build_image
+    image: plugins/ecr
+    settings:
+      registry: 340268328991.dkr.ecr.eu-west-2.amazonaws.com
+      repo: evw/docker-mongo
+      access_key:
+        from_secret: AWS_ACCESS_KEY_ID
+      secret_key:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      tags:
+        - ${DRONE_COMMIT_SHA}
+        - latest
+    environment:
+      AWS_REGION: eu-west-2
+    when:
+      event:
+        - push
+    depends_on:
+      - build_image
 
-...
+services:
+- name: docker
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+
+volumes:
+  - name: dockerclientconfig
+    temp: {}
