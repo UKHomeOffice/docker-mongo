@@ -38,7 +38,7 @@ steps:
       - name: dockerclientconfig
         path: /root/.docker
     depends_on:
-      - test_and_build
+      - ecr-login
     when:
       event:
         - push
