@@ -43,7 +43,7 @@ export MONGODB_WIRED_TIGER_CACHE_SIZE="${MONGODB_WIRED_TIGER_CACHE_SIZE:-1}"
 ##### Users and Databases #####
 
 # Admin user
-export MONGODB_ADMIN_USER_USERNAME="${MONGODB_ADMIN_USER_USERNAME:-CN=mongo-admin,OU=local-development-mongo-users,ST=London,C=GB}"
+export MONGODB_ADMIN_USER_USERNAME="${MONGODB_ADMIN_USER_USERNAME:-CN=mongo5-admin,OU=local-development-mongo-users,ST=London,C=GB}"
 export MONGODB_ADMIN_USER_AUTH_DB="${MONGODB_ADMIN_USER_AUTH_DB:-admin}"
 export MONGODB_ADMIN_USER_AUTH_TYPE="${MONGODB_ADMIN_USER_AUTH_TYPE:-X509}"
 export MONGODB_ADMIN_USER_PASSWORD="${MONGODB_ADMIN_USER_PASSWORD:-}"
@@ -183,7 +183,7 @@ echo "==> Attempting to execute start-up tasks"
 # Outside of Kubernetes, (i.e. when our hostname doesn't match
 # the Kubernetes pod naming convention), we should always manage users
 
-if hostname | grep -qx 'mongo-.*-0' || hostname | grep -qxv 'mongo-.*-[[:digit:]]*'; then
+if hostname | grep -qx 'mongo5-.*-0' || hostname | grep -qxv 'mongo5-.*-[[:digit:]]*'; then
 
     # (Re)start MongoDB in the background (auth, ssl, replicaSet)
     echo "==> Starting MongoDB as a background process"
