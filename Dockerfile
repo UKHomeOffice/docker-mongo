@@ -23,6 +23,8 @@ RUN yum clean all && \
 
 VOLUME ["/data/db","/data/configdb"]
 
+RUN yum -y update
+RUN yum install -y python2
 RUN pip2 install pymongo[tls]==3.11.3
 
 USER ${UID}
