@@ -61,4 +61,4 @@ options_string: ${options_string}
 
 DEBUG
 
-mongo --shell --ssl --sslCAFile "${ca_bundle}" --sslPEMKeyFile "${admin_bundle}" --eval "${auth_cmd}" mongodb://"${server_cert_cn}":27017/DB"${options_string}"
+/usr/bin/mongosh --shell --tls --tlsCAFile "${ca_bundle}" --tlsPEMKeyFile "${admin_bundle}" --eval "${auth_cmd}" mongodb://"${server_cert_cn}":27017/DB"${options_string}"
