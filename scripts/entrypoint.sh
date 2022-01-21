@@ -92,6 +92,8 @@ fi
 # SSL must be enabled for the user to access the database.
 
 # Common server startup options (including authentication)
+mkdir -p /data/db
+
 base_startup_command="mongod -f /etc/mongod.conf --auth --wiredTigerCacheSizeGB ${MONGODB_WIRED_TIGER_CACHE_SIZE}"
 
 # Start server without SSL for first-run initialisation
