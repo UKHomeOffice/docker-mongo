@@ -1,4 +1,3 @@
-FROM quay.io/ukhomeofficedigital/centos-base:26b3cc460ee5ba775702eeaa11bf24464adc822c
 FROM quay.io/ukhomeofficedigital/centos-base:a53308163ef47fb091c1aef1baf7f9dccd61cbe4
 
 USER root
