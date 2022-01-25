@@ -15,7 +15,7 @@ COPY ./mongodb-org.repo /etc/yum.repos.d/
 
 RUN yum clean all
 RUN yum -y install epel-release
-RUN yum -y install mongodb-org-server mongodb-org-shell mongodb-org-tools
+RUN yum -y install mongodb-org-server mongodb-org-shell mongodb-org-tools mongodb-mongosh
 RUN yum -y install python2 python2-pip
 RUN yum clean all
 RUN chown -v -R ${UID}:${UID} /var/lib/mongo
