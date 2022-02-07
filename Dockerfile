@@ -1,4 +1,4 @@
-FROM quay.io/ukhomeofficedigital/centos-base:a53308163ef47fb091c1aef1baf7f9dccd61cbe4
+FROM quay.io/centos/centos:stream8
 
 USER root
 
@@ -14,9 +14,8 @@ WORKDIR /var/lib/mongo
 COPY ./mongodb-org.repo /etc/yum.repos.d/
 
 RUN yum clean all
-RUN yum -y install epel-release
-RUN yum -y install mongodb-org-server mongodb-org-shell mongodb-org-tools mongodb-mongosh
-RUN yum -y install python2 python2-pip
+RUN yum -y update
+RUN yum -y install mongodb-org-server mongodb-org-shell mongodb-org-tools mongodb-mongosh vim tmux python2 python2-pip bind-utils
 RUN yum clean all
 RUN chown -v -R ${UID}:${UID} /var/lib/mongo
 RUN chown -v -R ${UID}:${UID} /var/log/mongodb
